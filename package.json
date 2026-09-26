@@ -34,7 +34,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "prepare": "npm run build",
+    "prepare": "npm install --include=dev --ignore-scripts && npm run build",
     "dev": "tsup --watch",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
