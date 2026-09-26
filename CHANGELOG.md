@@ -5,6 +5,15 @@ All notable changes to the better-auth-telegram plugin will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-26
+
+### Changed
+
+- Support Better Auth `>=1.7.6 <1.8.0` and its explicit OAuth account subject and ID-token contracts.
+- Telegram OIDC now requires BotFather's separate client secret, HTTP Basic token exchange, and a request nonce. Signed ID tokens are checked against Telegram's JWKS, issuer, audience, expiry, and nonce before profile claims are used.
+- OIDC integrations may choose `oidc.providerId` and `oidc.accountIdClaim: "id"` to share existing Telegram Widget or Mini App account identities.
+- Git installations build the package with `prepare`; Node.js 22 or newer is supported.
+
 ## [2.0.1] - 2026-07-29
 
 ### Changed

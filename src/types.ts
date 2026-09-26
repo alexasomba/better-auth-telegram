@@ -76,6 +76,8 @@ export interface TelegramOIDCClaims {
  * Configuration options for Telegram OIDC authentication
  */
 export interface TelegramOIDCOptions {
+  /** Stable account key from Telegram's signed claims. `id` joins Widget and Mini App accounts. */
+  accountIdClaim?: "id" | "sub";
   /**
    * Client ID from @BotFather's Web Login settings.
    * If omitted, extracted from the main botToken (first part before colon).
@@ -88,8 +90,7 @@ export interface TelegramOIDCOptions {
    * This is NOT your bot token — BotFather provides a separate secret
    * when you configure Web Login under Bot Settings > Web Login.
    *
-   * If omitted, falls back to the bot token (deprecated behavior that
-   * won't work with Telegram's official OIDC registration).
+   * Required for OIDC. The bot token is not an OIDC client secret.
    */
   clientSecret?: string;
 
@@ -108,6 +109,8 @@ export interface TelegramOIDCOptions {
     image?: string;
     [key: string]: any;
   };
+  /** Better Auth provider ID. Use the same ID as an existing Telegram account integration. */
+  providerId?: string;
 
   /**
    * Request bot access (adds "telegram:bot_access" scope)

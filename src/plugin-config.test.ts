@@ -178,7 +178,7 @@ describe("createPluginConfig", () => {
     createPluginConfig({
       ...BASE,
       testMode: true,
-      oidc: { enabled: true },
+      oidc: { enabled: true, clientSecret: "botfather-secret" },
     });
     expect(spy).toHaveBeenCalledOnce();
     expect(spy.mock.calls[0]![0]).toContain("testMode is enabled with OIDC");
@@ -194,7 +194,10 @@ describe("createPluginConfig", () => {
 
   it("does NOT warn when oidc is enabled but testMode is false", () => {
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    createPluginConfig({ ...BASE, oidc: { enabled: true } });
+    createPluginConfig({
+      ...BASE,
+      oidc: { enabled: true, clientSecret: "botfather-secret" },
+    });
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
