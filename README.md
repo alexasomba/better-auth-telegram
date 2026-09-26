@@ -15,7 +15,7 @@ Built on Web Crypto API — works in Node, Bun, Cloudflare Workers, and whatever
 ## Requirements
 
 - Node.js >= 22 (or Bun, or any runtime with Web Crypto API)
-- `better-auth@>=1.6.22 <1.7.0`
+- `better-auth@>=1.7.6 <1.8.0`
 
 ## Install
 
@@ -166,14 +166,9 @@ Standard OAuth 2.0 flow via `oauth.telegram.org`. Phone numbers, PKCE, and signe
 
 #### Prerequisites
 
-BotFather has a whole ritual for this. Skipping steps means `invalid_client` errors and Telegram silently falling back to Login Widget redirects like nothing happened. Don't skip steps.
-
-1. Open [@BotFather](https://t.me/botfather) **as a mini app** (not the chat — the mini app). Go to **Bot Settings > Web Login**
-2. Add your website URL. Then **remove it**. Yes, remove it. Close the panel, open **Web Login** again — a new option appears: **OpenID Connect Login**. This is a permanent, one-way switch. Telegram doesn't mention this anywhere because documentation is for the weak
-3. Go through the OIDC setup flow. It's permanent. No going back. Commitment issues? Too late
-4. Add your **Allowed URL** — your website origin (e.g., `https://example.com`). This is the trusted origin for the OAuth flow
-5. Add your **Redirect URL** — your OIDC callback (e.g., `https://example.com/api/auth/callback/telegram-oidc`). If this isn't registered, Telegram returns auth codes via `#tgAuthResult` fragment instead of `?code=` query param, and your server never sees them
-6. Copy your **Client ID** and **Client Secret**. They're right there on the screen. The Client Secret is NOT your bot token — BotFather generates a separate secret for OIDC. If you use the bot token, the token endpoint returns `invalid_client` and you'll spend hours debugging something that was never going to work
+1. Open [@BotFather](https://t.me/botfather), select your bot, and open **Login Widget**.
+2. Register your website origin (for example, `https://example.com`) and the exact Better Auth callback URL (for example, `https://example.com/api/auth/callback/telegram-oidc`) as Allowed URLs.
+3. Copy the Client ID and Client Secret shown there. The Client Secret is separate from your bot token.
 
 For local dev, point both URLs at your [ngrok](https://ngrok.com) tunnel (e.g., `https://abc123.ngrok-free.app` and `https://abc123.ngrok-free.app/api/auth/callback/telegram-oidc`). Every time ngrok restarts, you get a new URL. Update BotFather. Repeat until Stockholm syndrome sets in.
 
@@ -240,7 +235,9 @@ telegram({
 | `miniApp.mapMiniAppDataToUser` | — | Custom Mini App user mapper |
 | `oidc.enabled` | `false` | Enable Telegram OIDC flow |
 | `oidc.clientId` | — | Client ID from BotFather Web Login; falls back to the bot ID in `botToken` |
-| `oidc.clientSecret` | — | Client Secret from BotFather Web Login (NOT the bot token) |
+| `oidc.clientSecret` | — | Required Client Secret from BotFather Web Login (not the bot token) |
+| `oidc.providerId` | `telegram-oidc` | Better Auth provider ID; use an existing Telegram provider ID to share accounts |
+| `oidc.accountIdClaim` | `sub` | Use `id` to match existing Widget or Mini App account IDs |
 | `oidc.scopes` | `["openid", "profile"]` | OIDC scopes to request |
 | `oidc.requestPhone` | `false` | Request phone number (adds `phone` scope) |
 | `oidc.requestBotAccess` | `false` | Request bot access (adds `telegram:bot_access` scope) |
@@ -259,7 +256,7 @@ Full types in [`src/types.ts`](./src/types.ts).
 | POST | `/telegram/miniapp/signin` | No | Sign in from Mini App |
 | POST | `/telegram/miniapp/validate` | No | Validate initData |
 
-OIDC uses Better Auth's built-in social login routes — `POST /sign-in/social` with `provider: "telegram-oidc"` and `GET /callback/telegram-oidc`. No custom endpoints needed. Delegation at its finest.
+OIDC uses Better Auth's social login routes: `POST /sign-in/social` and `GET /callback/<providerId>`. The default provider ID is `telegram-oidc`; configure `oidc.providerId` when joining an existing Telegram account namespace.
 
 All endpoints are rate-limited. Signin/miniapp: 10 req/60s. Link/unlink: 5 req/60s. Validate: 20 req/60s. Brute-forcing was never a strategy, now it's also a throttled one.
 
@@ -286,7 +283,7 @@ HMAC-SHA-256 verification on all auth data via Web Crypto API (`crypto.subtle`).
 
 Login Widget uses `SHA256(botToken)` as secret key. Mini Apps use `HMAC-SHA256("WebAppData", botToken)`. Different derivation paths, same level of paranoia.
 
-OIDC verifies Telegram's documented `RS256`, `ES256`, and `EdDSA` JWT signatures via its JWKS endpoint, plus PKCE and state tokens for the OAuth flow. Keys must match both `kid` and `alg`. `ES256K` is intentionally rejected because the current `jose` runtime does not support it.
+OIDC verifies Telegram's `RS256`, `ES256`, and `EdDSA` JWT signatures via its JWKS endpoint, checks issuer, audience, expiry and request nonce, and uses PKCE and state for the authorization code flow. The token exchange uses HTTP Basic authentication with the separate OIDC client secret.
 
 Is it bulletproof? No. Is it better than storing passwords in plain text? Significantly.
 

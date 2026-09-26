@@ -82,9 +82,9 @@ export function createPluginConfig(
     );
   }
 
-  if (oidcEnabled && !(oidc?.clientSecret || resolvedBotToken)) {
+  if (oidcEnabled && !oidc?.clientSecret) {
     console.warn(
-      "[better-auth-telegram] OIDC: clientSecret is required. Configure oidc.clientSecret or botToken before starting an OIDC login."
+      "[better-auth-telegram] OIDC: clientSecret is required from BotFather Web Login. The bot token cannot be used as an OIDC client secret."
     );
   }
 
