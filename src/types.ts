@@ -72,12 +72,30 @@ export interface TelegramOIDCClaims {
   sub: string;
 }
 
+/** Safe, fixed failure categories. No token, claims, or user details are included. */
+export type TelegramOIDCValidationFailure =
+  | "missing_id_token"
+  | "missing_expected_nonce"
+  | "missing_client_id"
+  | "jwt_expired"
+  | "jwt_audience_invalid"
+  | "jwt_issuer_invalid"
+  | "jwt_signature_invalid"
+  | "jwks_no_matching_key"
+  | "jwks_timeout"
+  | "jwt_validation_failed"
+  | "nonce_mismatch"
+  | "missing_subject"
+  | "invalid_numeric_id";
+
 /**
  * Configuration options for Telegram OIDC authentication
  */
 export interface TelegramOIDCOptions {
   /** Stable account key from Telegram's signed claims. `id` joins Widget and Mini App accounts. */
   accountIdClaim?: "id" | "sub";
+  /** Receives only a fixed failure category for private server-side diagnostics. */
+  onValidationFailure?: (reason: TelegramOIDCValidationFailure) => void;
   /**
    * Client ID from @BotFather's Web Login settings.
    * If omitted, extracted from the main botToken (first part before colon).
