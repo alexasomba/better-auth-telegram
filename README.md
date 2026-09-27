@@ -14,7 +14,7 @@ Built on Web Crypto API — works in Node, Bun, Cloudflare Workers, and whatever
 
 ## Requirements
 
-- Node.js >= 22 (or Bun, or any runtime with Web Crypto API)
+- Node.js >= 24 (as declared by this package), or a supported runtime with Web Crypto API
 - `better-auth@>=1.7.6 <1.8.0`
 
 ## Install
@@ -55,7 +55,7 @@ import { telegramClient } from "better-auth-telegram/client";
 
 export const authClient = createAuthClient({
   fetchOptions: {
-    credentials: "include", // required for link/unlink
+    credentials: "include", // required when widget link/unlink uses cross-origin requests
   },
   plugins: [telegramClient()],
 });
@@ -186,7 +186,7 @@ telegram({
     enabled: true,
     clientId: process.env.TELEGRAM_OIDC_CLIENT_ID!,
     clientSecret: process.env.TELEGRAM_OIDC_CLIENT_SECRET!, // from BotFather Web Login
-    requestPhone: true, // get phone numbers, finally
+    // requestPhone: true, // opt in only if your app needs a phone number
   },
 });
 ```
@@ -200,6 +200,63 @@ await authClient.signInWithTelegramOIDC({
 ```
 
 That's it. Standard Better Auth social login under the hood. PKCE, state tokens, the works. You don't even need to think about it, which is the whole point.
+
+`signInWithTelegramOIDC()` currently uses the default `telegram-oidc` provider ID. If
+you set `oidc.providerId` to another value, call Better Auth's social methods with
+that value instead. Register the matching exact callback URL in BotFather:
+
+```typescript
+// With oidc.providerId: "telegram" on the server:
+await authClient.signIn.social({
+  provider: "telegram",
+  callbackURL: "/dashboard",
+});
+// BotFather redirect URI: https://example.com/api/auth/callback/telegram
+```
+
+#### Link OIDC to an existing Better Auth account
+
+Telegram OIDC supplies no verified email. This plugin gives Better Auth a placeholder
+email and leaves `emailVerified` false. Better Auth therefore rejects explicit
+`linkSocial` calls unless Telegram is a trusted provider; it also rejects a link to
+an account with a different email unless `allowDifferentEmails` is enabled:
+
+```typescript
+// Better Auth server configuration, alongside the telegram(...) plugin:
+export const auth = betterAuth({
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["telegram"], // use your oidc.providerId here
+      allowDifferentEmails: true,
+    },
+  },
+  plugins: [telegram({
+    loginWidget: false,
+    oidc: {
+      enabled: true,
+      clientId: process.env.TELEGRAM_OIDC_CLIENT_ID!,
+      clientSecret: process.env.TELEGRAM_OIDC_CLIENT_SECRET!,
+      providerId: "telegram",
+    },
+  })],
+});
+```
+
+Then, from a signed-in client with `oidc.providerId: "telegram"`:
+
+```typescript
+await authClient.linkSocial({
+  provider: "telegram",
+  callbackURL: "/account",
+});
+```
+
+`allowDifferentEmails` applies to all providers in that Better Auth instance.
+Only enable it when your app permits an authenticated user to explicitly link a
+different provider email. Keep placeholder addresses unverified and exclude them
+from email delivery. An identity already linked to another user cannot be linked
+again; resolve that account conflict separately.
 
 #### OIDC-only mode
 
@@ -216,6 +273,10 @@ telegram({
   },
 });
 ```
+
+When using only Better Auth's `signIn.social()` and `linkSocial()` for OIDC,
+the `telegramClient()` client plugin is optional. Add it if you use
+`signInWithTelegramOIDC()` or the plugin's Widget and Mini App client methods.
 
 ## Configuration
 
