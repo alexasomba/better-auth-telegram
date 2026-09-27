@@ -54,6 +54,16 @@ export function buildScopes(options: TelegramOIDCOptions): string[] {
   return [...scopes];
 }
 
+/** Normalize only an exact, safely representable Telegram user ID. */
+function numericTelegramUserId(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 /** Telegram OIDC provider for Better Auth 1.7. */
 export function createTelegramOIDCProvider(
   botToken: string,
@@ -99,16 +109,13 @@ export function createTelegramOIDCProvider(
     },
     accountSubject: ({ profile }) => {
       if (options.accountIdClaim === "id") {
-        if (
-          typeof profile.id !== "number" ||
-          !Number.isSafeInteger(profile.id) ||
-          profile.id <= 0
-        ) {
+        const userId = numericTelegramUserId(profile.id);
+        if (userId === null) {
           throw new Error(
             "Telegram OIDC profile has no valid numeric user ID."
           );
         }
-        return profile.id;
+        return userId;
       }
       if (typeof profile.sub !== "string" || !profile.sub) {
         throw new Error("Telegram OIDC profile has no subject.");
@@ -171,13 +178,13 @@ export function createTelegramOIDCProvider(
       if (typeof claims.sub !== "string" || !claims.sub) {
         return reportFailure("missing_subject");
       }
-      if (
-        options.accountIdClaim === "id" &&
-        (typeof claims.id !== "number" ||
-          !Number.isSafeInteger(claims.id) ||
-          claims.id <= 0)
-      ) {
-        return reportFailure("invalid_numeric_id");
+      if (options.accountIdClaim === "id") {
+        if (claims.id === undefined || claims.id === null) {
+          return reportFailure("missing_numeric_id");
+        }
+        const userId = numericTelegramUserId(claims.id);
+        if (userId === null) return reportFailure("invalid_numeric_id");
+        claims = { ...claims, id: userId };
       }
 
       const mapped = options.mapOIDCProfileToUser?.(claims);

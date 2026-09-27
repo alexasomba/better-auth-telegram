@@ -62,7 +62,7 @@ export interface TelegramOIDCClaims {
   family_name?: string;
   given_name?: string;
   iat: number;
-  id?: number;
+  id?: number | string;
   iss: string;
   name?: string;
   phone_number?: string;
@@ -86,6 +86,7 @@ export type TelegramOIDCValidationFailure =
   | "jwt_validation_failed"
   | "nonce_mismatch"
   | "missing_subject"
+  | "missing_numeric_id"
   | "invalid_numeric_id";
 
 /**
