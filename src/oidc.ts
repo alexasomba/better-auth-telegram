@@ -188,8 +188,14 @@ export function createTelegramOIDCProvider(
       }
 
       const mapped = options.mapOIDCProfileToUser?.(claims);
+      const mappedUserFields = { ...(mapped ?? {}) };
+      // The mapper may add fields defined in Better Auth's user schema, but it
+      // must not replace Better Auth's primary key or Telegram's unverified
+      // email status.
+      delete mappedUserFields.id;
       return {
         user: {
+          ...mappedUserFields,
           name: mapped?.name ?? claims.name,
           image: mapped?.image ?? claims.picture,
           email: mapped?.email ?? `${claims.sub}@telegram.oidc`,

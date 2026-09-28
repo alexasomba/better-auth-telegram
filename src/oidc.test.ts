@@ -182,6 +182,36 @@ describe("Telegram OIDC provider for Better Auth 1.7", () => {
       expect(result?.user.emailVerified).toBe(false);
     });
 
+    it("preserves custom mapped Better Auth fields without trusting mapper email verification", async () => {
+      const telegramProvider = provider({
+        providerId: "telegram",
+        accountIdClaim: "id",
+        mapOIDCProfileToUser: (claims) => ({
+          email: `telegram-${claims.id}@telegram.clearaccess.invalid`,
+          emailVerified: true,
+          phoneNumber: claims.phone_number,
+          phoneNumberVerified: claims.phone_number_verified,
+          telegramUsername: claims.preferred_username,
+        }),
+      });
+      const result = await telegramProvider.getUserInfo({
+        idToken: await signedToken({
+          phone_number: "+2348012345678",
+          phone_number_verified: true,
+          preferred_username: "clearaccess-member",
+        }),
+        expectedIdTokenNonce: NONCE,
+      });
+
+      expect(result?.user).toMatchObject({
+        email: "telegram-900001@telegram.clearaccess.invalid",
+        emailVerified: false,
+        phoneNumber: "+2348012345678",
+        phoneNumberVerified: true,
+        telegramUsername: "clearaccess-member",
+      });
+    });
+
     it("normalizes a signed decimal ID to the existing Telegram account key", async () => {
       const telegramProvider = provider({
         accountIdClaim: "id",
