@@ -90,12 +90,26 @@ describe("Telegram OIDC provider for Better Auth 1.7", () => {
     expect(
       await telegramProvider.accountSubject({ tokens: {}, profile: profile() })
     ).toBe(900001);
+    expect(
+      await telegramProvider.accountSubject({
+        tokens: {},
+        profile: profile({ id: "900001" }),
+      })
+    ).toBe(900001);
     expect(() =>
       telegramProvider.accountSubject({
         tokens: {},
         profile: profile({ id: undefined }),
       })
     ).toThrow("numeric user ID");
+    for (const id of ["0900001", "9e5", "900001.0", "9007199254740992"]) {
+      expect(() =>
+        telegramProvider.accountSubject({
+          tokens: {},
+          profile: profile({ id }),
+        })
+      ).toThrow("numeric user ID");
+    }
     expect(
       await provider().accountSubject({ tokens: {}, profile: profile() })
     ).toBe("long-oidc-subject");
@@ -166,6 +180,41 @@ describe("Telegram OIDC provider for Better Auth 1.7", () => {
         "telegram-900001@telegram.clearaccess.invalid"
       );
       expect(result?.user.emailVerified).toBe(false);
+    });
+
+    it("normalizes a signed decimal ID to the existing Telegram account key", async () => {
+      const telegramProvider = provider({
+        accountIdClaim: "id",
+        mapOIDCProfileToUser: (claims) => ({
+          email: `telegram-${claims.id}@telegram.clearaccess.invalid`,
+        }),
+      });
+      const result = await telegramProvider.getUserInfo({
+        idToken: await signedToken({ id: "900001" }),
+        expectedIdTokenNonce: NONCE,
+      });
+      expect(result?.data.id).toBe(900001);
+      expect(result?.user.email).toBe(
+        "telegram-900001@telegram.clearaccess.invalid"
+      );
+      expect(
+        await telegramProvider.accountSubject({
+          tokens: {},
+          profile: result?.data ?? profile({ id: undefined }),
+        })
+      ).toBe(900001);
+    });
+
+    it("reports a missing profile ID without falling back to the OIDC subject", async () => {
+      const onValidationFailure = vi.fn();
+      const telegramProvider = provider({ accountIdClaim: "id", onValidationFailure });
+      expect(
+        await telegramProvider.getUserInfo({
+          idToken: await signedToken({ id: undefined }),
+          expectedIdTokenNonce: NONCE,
+        })
+      ).toBeNull();
+      expect(onValidationFailure).toHaveBeenCalledWith("missing_numeric_id");
     });
 
     it("rejects a missing or mismatched nonce", async () => {

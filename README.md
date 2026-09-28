@@ -298,7 +298,8 @@ the `telegramClient()` client plugin is optional. Add it if you use
 | `oidc.clientId` | — | Client ID from BotFather Web Login; falls back to the bot ID in `botToken` |
 | `oidc.clientSecret` | — | Required Client Secret from BotFather Web Login (not the bot token) |
 | `oidc.providerId` | `telegram-oidc` | Better Auth provider ID; use an existing Telegram provider ID to share accounts |
-| `oidc.accountIdClaim` | `sub` | Use `id` to match existing Widget or Mini App account IDs |
+| `oidc.accountIdClaim` | `sub` | Use `id` to match existing Widget or Mini App account IDs; requires a positive safe integer from the `profile` scope, supplied as a JSON number or decimal string |
+| `oidc.onValidationFailure` | — | Optional server-side callback with a fixed failure category; never receives token or user data |
 | `oidc.scopes` | `["openid", "profile"]` | OIDC scopes to request |
 | `oidc.requestPhone` | `false` | Request phone number (adds `phone` scope) |
 | `oidc.requestBotAccess` | `false` | Request bot access (adds `telegram:bot_access` scope) |
