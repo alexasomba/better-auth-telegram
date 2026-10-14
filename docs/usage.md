@@ -222,6 +222,8 @@ That's it. Better Auth's social login system handles the PKCE, state tokens, JWT
 
 The `phone` scope gives you what the Login Widget never could. With `requestPhone: true`, Telegram can return `phone_number` and `phone_number_verified` claims. The plugin exposes them to `mapOIDCProfileToUser`; persist the value in a field defined by your user schema.
 
+Fields returned by `mapOIDCProfileToUser` are forwarded to Better Auth's user profile, including custom fields declared in your user schema. Telegram OIDC email stays unverified even if the mapper returns `emailVerified: true`, and the mapper cannot replace Better Auth's user ID. Only treat a Telegram phone as verified when `phone_number_verified` is `true`; requesting the `phone` scope requires the user's consent in Telegram. To copy mapped profile fields onto an existing account after an explicit social-account link, enable Better Auth's `account.accountLinking.updateUserInfoOnLink` option. Better Auth still preserves the account's existing email and email verification status.
+
 ```typescript
 // With telegramPhoneNumber defined in your user schema and mapped above:
 {
