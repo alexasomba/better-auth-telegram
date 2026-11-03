@@ -1,300 +1,139 @@
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
+// @vitest-environment node
+/**
+ * Provider rules that are awkward to reach through a full sign-in. The
+ * authorization URL, token exchange, ID token checks and account binding are
+ * covered against a real Better Auth instance in oidc.integration.test.ts.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TELEGRAM_OIDC_ISSUER } from "./constants";
-import { telegram } from "./index";
-import { buildScopes, createTelegramOIDCProvider } from "./oidc";
+import { createTelegramOIDCProvider } from "./oidc";
+import {
+  BOT_TOKEN,
+  mockTelegramOIDC,
+  type TelegramOIDCMock,
+  telegramClaims,
+} from "./testing/harness";
 import type { TelegramOIDCClaims } from "./types";
 
-const CLIENT_ID = "123456789";
-const CLIENT_SECRET = "botfather-oidc-secret";
-const NONCE = "nonce-from-better-auth-state";
+const CLIENT_SECRET = "client-secret-from-botfather";
+const authorizationRequest = {
+  state: "state",
+  codeVerifier: "verifier",
+  redirectURI: "https://example.com/api/auth/callback/telegram-oidc",
+};
 
-function provider(
-  options: Parameters<typeof createTelegramOIDCProvider>[1] = {}
-) {
-  return createTelegramOIDCProvider("123456789:bot-token", {
-    clientId: CLIENT_ID,
-    clientSecret: CLIENT_SECRET,
-    ...options,
-  });
-}
+describe("client credentials", () => {
+  it("never falls back to the bot token as the client secret", () => {
+    // Telegram rejects the bot token; v3 requires oidc.clientSecret.
+    const provider = createTelegramOIDCProvider(BOT_TOKEN, {});
 
-function profile(
-  options: Partial<TelegramOIDCClaims> = {}
-): TelegramOIDCClaims {
-  return {
-    aud: CLIENT_ID,
-    exp: Math.floor(Date.now() / 1000) + 3600,
-    iat: Math.floor(Date.now() / 1000),
-    iss: TELEGRAM_OIDC_ISSUER,
-    sub: "long-oidc-subject",
-    id: 900001,
-    name: "Telegram Member",
-    ...options,
-  };
-}
-
-describe("Telegram OIDC provider for Better Auth 1.7", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("requests only the configured scopes", () => {
-    expect(buildScopes({})).toEqual(["openid", "profile"]);
-    expect(buildScopes({ requestPhone: true, requestBotAccess: true })).toEqual(
-      ["openid", "profile", "phone", "telegram:bot_access"]
+    expect(() => provider.createAuthorizationURL(authorizationRequest)).toThrow(
+      "oidc.clientSecret is required"
     );
   });
 
-  it("binds the redirect to state, PKCE, and an OIDC nonce", async () => {
-    const telegramProvider = provider({
-      providerId: "telegram",
-      accountIdClaim: "id",
+  it("refuses to start a login with an empty client_id", () => {
+    const provider = createTelegramOIDCProvider("", {
+      clientSecret: CLIENT_SECRET,
     });
-    const url = await telegramProvider.createAuthorizationURL({
-      state: "server-state",
-      codeVerifier: "server-verifier",
-      idTokenNonce: NONCE,
-      redirectURI: "https://clearaccess.app/api/auth/callback/telegram",
+
+    expect(() => provider.createAuthorizationURL(authorizationRequest)).toThrow(
+      "oidc.clientId (or botToken) is required"
+    );
+  });
+});
+
+describe("accountSubject", () => {
+  const profile = telegramClaims() as unknown as TelegramOIDCClaims;
+
+  it.each([
+    ["empty", ""],
+    ["numeric", 123],
+  ])("refuses to key an account by an %s sub", (_kind, sub) => {
+    const provider = createTelegramOIDCProvider(BOT_TOKEN, {
+      clientSecret: CLIENT_SECRET,
     });
-    expect(telegramProvider.id).toBe("telegram");
-    expect(telegramProvider.issuer).toBe(TELEGRAM_OIDC_ISSUER);
-    expect(telegramProvider.requiresIdTokenNonce).toBe(true);
-    expect(telegramProvider.options?.disableIdTokenSignIn).toBe(true);
-    expect(url.origin).toBe("https://oauth.telegram.org");
-    expect(url.searchParams.get("state")).toBe("server-state");
-    expect(url.searchParams.get("nonce")).toBe(NONCE);
-    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(url.searchParams.get("redirect_uri")).toBe(
-      "https://clearaccess.app/api/auth/callback/telegram"
+
+    expect(() =>
+      provider.accountSubject({
+        tokens: {},
+        profile: { ...profile, sub } as unknown as TelegramOIDCClaims,
+      })
+    ).toThrow("ID token has no subject");
+  });
+});
+
+describe("getUserInfo", () => {
+  let telegram: TelegramOIDCMock;
+
+  beforeEach(async () => {
+    telegram = await mockTelegramOIDC();
+  });
+
+  afterEach(() => {
+    telegram.restore();
+    vi.restoreAllMocks();
+  });
+
+  const provider = (options = {}) =>
+    createTelegramOIDCProvider(BOT_TOKEN, {
+      clientSecret: CLIENT_SECRET,
+      ...options,
+    });
+
+  it("names the user from given and family name, then username, when `name` is absent", async () => {
+    const fromParts = await provider().getUserInfo({
+      idToken: await telegram.sign(telegramClaims({ name: undefined })),
+    });
+    const fromUsername = await provider().getUserInfo({
+      idToken: await telegram.sign({ sub: "1", preferred_username: "ann" }),
+    });
+
+    expect(fromParts?.user.name).toBe("Ann Example");
+    expect(fromUsername?.user.name).toBe("ann");
+  });
+
+  it("applies mapOIDCProfileToUser but never lets it set the user id", async () => {
+    const result = await provider({
+      mapOIDCProfileToUser: (claims: TelegramOIDCClaims) => ({
+        id: "hijack",
+        email: `${claims.preferred_username}@example.com`,
+      }),
+    }).getUserInfo({ idToken: await telegram.sign(telegramClaims()) });
+
+    expect(result?.user.email).toBe("ann@example.com");
+    expect(result?.user).not.toHaveProperty("id");
+  });
+
+  it("warns that the bot's signing algorithm drops profile claims", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await provider().getUserInfo({
+      idToken: await telegram.sign({ sub: "12224742808376279442" }),
+    });
+
+    expect(result).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("no profile claims"),
+      expect.stringMatching(/EdDSA.*RS256 or ES256/u)
     );
   });
 
-  it("rejects OIDC login without BotFather's separate client secret", () => {
-    const telegramProvider = createTelegramOIDCProvider("123456789:bot-token", {
-      clientId: CLIENT_ID,
-    });
-    expect(() =>
-      telegramProvider.createAuthorizationURL({
-        state: "state",
-        codeVerifier: "verifier",
-        idTokenNonce: NONCE,
-        redirectURI: "https://clearaccess.app/api/auth/callback/telegram",
-      })
-    ).toThrow("separate client secret");
-  });
+  it("logs to the logger it is given (the plugin passes Better Auth's)", async () => {
+    const logger = { warn: vi.fn() };
+    const console = vi.spyOn(globalThis.console, "warn");
 
-  it("uses the signed numeric ID to reuse Widget and Mini App accounts", async () => {
-    const telegramProvider = provider({
-      providerId: "telegram",
-      accountIdClaim: "id",
-    });
-    expect(
-      await telegramProvider.accountSubject({ tokens: {}, profile: profile() })
-    ).toBe(900001);
-    expect(
-      await telegramProvider.accountSubject({
-        tokens: {},
-        profile: profile({ id: "900001" }),
-      })
-    ).toBe(900001);
-    expect(() =>
-      telegramProvider.accountSubject({
-        tokens: {},
-        profile: profile({ id: undefined }),
-      })
-    ).toThrow("numeric user ID");
-    for (const id of ["0900001", "9e5", "900001.0", "9007199254740992"]) {
-      expect(() =>
-        telegramProvider.accountSubject({
-          tokens: {},
-          profile: profile({ id }),
-        })
-      ).toThrow("numeric user ID");
-    }
-    expect(
-      await provider().accountSubject({ tokens: {}, profile: profile() })
-    ).toBe("long-oidc-subject");
-  });
-
-  describe("signed identity token", () => {
-    let privateKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
-    let jwks: { keys: Record<string, unknown>[] };
-
-    beforeEach(async () => {
-      const keyPair = await generateKeyPair("RS256");
-      privateKey = keyPair.privateKey;
-      jwks = {
-        keys: [
-          {
-            ...(await exportJWK(keyPair.publicKey)),
-            kid: "telegram-key",
-            alg: "RS256",
-            use: "sig",
-          },
-        ],
-      };
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(
-          async () =>
-            new Response(JSON.stringify(jwks), {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            })
-        )
-      );
+    await createTelegramOIDCProvider(
+      BOT_TOKEN,
+      { clientSecret: CLIENT_SECRET, disableDefaultScope: true },
+      logger
+    ).getUserInfo({
+      idToken: await telegram.sign({ sub: "12224742808376279442" }),
     });
 
-    function signedToken(
-      overrides: Record<string, unknown> = {},
-      audience = CLIENT_ID
-    ) {
-      return new SignJWT({
-        sub: "long-oidc-subject",
-        id: 900001,
-        name: "Telegram Member",
-        nonce: NONCE,
-        ...overrides,
-      })
-        .setProtectedHeader({ alg: "RS256", kid: "telegram-key" })
-        .setIssuedAt()
-        .setExpirationTime("1h")
-        .setIssuer(TELEGRAM_OIDC_ISSUER)
-        .setAudience(audience)
-        .sign(privateKey);
-    }
-
-    it("accepts a signed token and preserves an unverified placeholder email", async () => {
-      const telegramProvider = provider({
-        providerId: "telegram",
-        accountIdClaim: "id",
-        mapOIDCProfileToUser: (claims) => ({
-          email: `telegram-${claims.id}@telegram.clearaccess.invalid`,
-        }),
-      });
-      const result = await telegramProvider.getUserInfo({
-        idToken: await signedToken(),
-        expectedIdTokenNonce: NONCE,
-      });
-      expect(result?.data.id).toBe(900001);
-      expect(result?.user.email).toBe(
-        "telegram-900001@telegram.clearaccess.invalid"
-      );
-      expect(result?.user.emailVerified).toBe(false);
-    });
-
-    it("preserves custom mapped Better Auth fields without trusting mapper email verification", async () => {
-      const telegramProvider = provider({
-        providerId: "telegram",
-        accountIdClaim: "id",
-        mapOIDCProfileToUser: (claims) => ({
-          email: `telegram-${claims.id}@telegram.clearaccess.invalid`,
-          emailVerified: true,
-          phoneNumber: claims.phone_number,
-          phoneNumberVerified: claims.phone_number_verified,
-          telegramUsername: claims.preferred_username,
-        }),
-      });
-      const result = await telegramProvider.getUserInfo({
-        idToken: await signedToken({
-          phone_number: "+2348012345678",
-          phone_number_verified: true,
-          preferred_username: "clearaccess-member",
-        }),
-        expectedIdTokenNonce: NONCE,
-      });
-
-      expect(result?.user).toMatchObject({
-        email: "telegram-900001@telegram.clearaccess.invalid",
-        emailVerified: false,
-        phoneNumber: "+2348012345678",
-        phoneNumberVerified: true,
-        telegramUsername: "clearaccess-member",
-      });
-    });
-
-    it("normalizes a signed decimal ID to the existing Telegram account key", async () => {
-      const telegramProvider = provider({
-        accountIdClaim: "id",
-        mapOIDCProfileToUser: (claims) => ({
-          email: `telegram-${claims.id}@telegram.clearaccess.invalid`,
-        }),
-      });
-      const result = await telegramProvider.getUserInfo({
-        idToken: await signedToken({ id: "900001" }),
-        expectedIdTokenNonce: NONCE,
-      });
-      expect(result?.data.id).toBe(900001);
-      expect(result?.user.email).toBe(
-        "telegram-900001@telegram.clearaccess.invalid"
-      );
-      expect(
-        await telegramProvider.accountSubject({
-          tokens: {},
-          profile: result?.data ?? profile({ id: undefined }),
-        })
-      ).toBe(900001);
-    });
-
-    it("reports a missing profile ID without falling back to the OIDC subject", async () => {
-      const onValidationFailure = vi.fn();
-      const telegramProvider = provider({ accountIdClaim: "id", onValidationFailure });
-      expect(
-        await telegramProvider.getUserInfo({
-          idToken: await signedToken({ id: undefined }),
-          expectedIdTokenNonce: NONCE,
-        })
-      ).toBeNull();
-      expect(onValidationFailure).toHaveBeenCalledWith("missing_numeric_id");
-    });
-
-    it("rejects a missing or mismatched nonce", async () => {
-      const telegramProvider = provider();
-      const idToken = await signedToken();
-      expect(await telegramProvider.getUserInfo({ idToken })).toBeNull();
-      expect(
-        await telegramProvider.getUserInfo({
-          idToken,
-          expectedIdTokenNonce: "different-nonce",
-        })
-      ).toBeNull();
-    });
-
-    it("rejects a wrong audience, unsigned payload, and missing numeric ID", async () => {
-      const telegramProvider = provider({ accountIdClaim: "id" });
-      expect(
-        await telegramProvider.getUserInfo({
-          idToken: await signedToken({}, "other-client"),
-          expectedIdTokenNonce: NONCE,
-        })
-      ).toBeNull();
-      expect(
-        await telegramProvider.getUserInfo({
-          idToken: "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmb3JnZWQifQ.",
-          expectedIdTokenNonce: NONCE,
-        })
-      ).toBeNull();
-      expect(
-        await telegramProvider.getUserInfo({
-          idToken: await signedToken({ id: undefined }),
-          expectedIdTokenNonce: NONCE,
-        })
-      ).toBeNull();
-    });
-  });
-
-  it("allows OIDC-only setup alongside a separate Mini App auth plugin", () => {
-    const plugin = telegram({
-      loginWidget: false,
-      oidc: {
-        enabled: true,
-        clientId: CLIENT_ID,
-        clientSecret: CLIENT_SECRET,
-        providerId: "telegram",
-        accountIdClaim: "id",
-      },
-    });
-    expect(plugin.schema).toBeUndefined();
-    expect(plugin.endpoints).not.toHaveProperty("signInWithTelegram");
-    expect(plugin.init).toBeDefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("no profile claims"),
+      expect.stringContaining("disableDefaultScope")
+    );
+    expect(console).not.toHaveBeenCalled();
   });
 });

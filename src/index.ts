@@ -7,22 +7,27 @@ import {
 } from "./miniapp-endpoints";
 import { createTelegramOIDCProvider } from "./oidc";
 import { createPluginConfig } from "./plugin-config";
-import { createTelegramSchema } from "./schema";
+import { createTelegramSchema, type TelegramSchema } from "./schema";
+import {
+  refreshSessionAfterOIDC,
+  telegramIdentityHooks,
+} from "./telegram-identity";
 import type { TelegramPluginOptions } from "./types";
 import { createWidgetEndpoints, getWidgetRateLimits } from "./widget-endpoints";
 
 // biome-ignore lint/performance/noBarrelFile: Public API re-export
+export { TELEGRAM_ERROR_CODES } from "./error-codes";
 export { createTelegramOIDCProvider } from "./oidc";
 export type { TelegramPluginConfig } from "./plugin-config";
 export type {
   TelegramAccountRecord,
   TelegramAuthData,
+  TelegramMappedUser,
   TelegramMiniAppChat,
   TelegramMiniAppData,
   TelegramMiniAppUser,
   TelegramOIDCClaims,
   TelegramOIDCOptions,
-  TelegramOIDCValidationFailure,
   TelegramPluginOptions,
 } from "./types";
 
@@ -32,7 +37,7 @@ export type {
  * @example
  * ```ts
  * import { betterAuth } from "better-auth";
- * import { telegram } from "better-auth-telegram";
+ * import { telegram } from "@alexasomba/better-auth-telegram";
  *
  * export const auth = betterAuth({
  *   plugins: [
@@ -50,26 +55,50 @@ export const telegram = (options: TelegramPluginOptions) => {
   return {
     id: PLUGIN_ID,
 
-    // Inject OIDC provider into better-auth's social providers
-    ...(config.oidcEnabled
-      ? {
-          init: (ctx) => ({
-            context: {
-              socialProviders: [
-                createTelegramOIDCProvider(config.botToken, config.oidc!),
-                ...ctx.socialProviders,
-              ],
-            },
+    // Inject the OIDC provider into Better Auth's social providers, and
+    // install the database hooks that guard placeholder emails and keep the
+    // Telegram identity on the user consistent (see telegram-identity.ts).
+    init: (ctx) => {
+      for (const warning of config.warnings) {
+        ctx.logger.warn(warning);
+      }
+      return {
+        ...(config.oidcEnabled
+          ? {
+              context: {
+                socialProviders: [
+                  createTelegramOIDCProvider(
+                    config.botToken,
+                    config.oidc!,
+                    ctx.logger
+                  ),
+                  ...ctx.socialProviders,
+                ],
+              },
+            }
+          : {}),
+        options: {
+          databaseHooks: telegramIdentityHooks(ctx, {
+            identityFields: config.widgetEnabled || config.miniAppEnabled,
+            updateUserInfo:
+              config.oidcEnabled && !!config.oidc?.updateUserInfoOnSignIn,
           }),
-        }
-      : {}),
+        },
+      };
+    },
 
-    schema: createTelegramSchema(config),
+    // Typed as always present so the fields are inferred on `session.user`
+    // (a `| undefined` hides them); at runtime it is absent in OIDC-only mode.
+    schema: createTelegramSchema(config) as TelegramSchema,
 
     endpoints: {
       ...(config.widgetEnabled ? createWidgetEndpoints(config) : {}),
       ...(config.miniAppEnabled ? createMiniAppEndpoints(config) : {}),
       ...createConfigEndpoint(config),
+    },
+
+    hooks: {
+      after: config.oidcEnabled ? [refreshSessionAfterOIDC] : [],
     },
 
     $ERROR_CODES: ERROR_CODES,
